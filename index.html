@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tilt — Phone Balance Game</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0a0a1a;
+  overflow: hidden;
+  touch-action: none;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: #fff;
+  height: 100dvh;
+  width: 100vw;
+  position: relative;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Screens ── */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: opacity 0.4s;
+}
+.screen.hidden { opacity: 0; pointer-events: none; }
+
+#start-screen {
+  background: radial-gradient(ellipse at center, #1a1a3e 0%, #0a0a1a 100%);
+}
+
+#start-screen h1 {
+  font-size: 3.5rem;
+  font-weight: 900;
+  letter-spacing: -2px;
+  margin-bottom: 0.2em;
+  background: linear-gradient(135deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s ease infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+#start-screen .subtitle {
+  font-size: 1rem;
+  color: #888;
+  margin-bottom: 2em;
+}
+
+.btn {
+  background: linear-gradient(135deg, #4d96ff, #6bcb77);
+  border: none;
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 700;
+  padding: 0.9em 2.5em;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 24px rgba(77, 150, 255, 0.3);
+  margin: 0.4em;
+}
+.btn:active { transform: scale(0.95); }
+
+.btn-secondary {
+  background: rgba(255,255,255,0.08);
+  box-shadow: none;
+  font-size: 1rem;
+  padding: 0.7em 2em;
+}
+
+#game-over-screen {
+  background: rgba(10,10,26,0.92);
+}
+#game-over-screen h2 {
+  font-size: 2.4rem;
+  font-weight: 800;
+  margin-bottom: 0.2em;
+}
+#game-over-screen .final-score {
+  font-size: 1.5rem;
+  color: #ffd93d;
+  margin-bottom: 0.3em;
+}
+#game-over-screen .high-score {
+  font-size: 0.95rem;
+  color: #888;
+  margin-bottom: 1.5em;
+}
+
+/* ── HUD ── */
+#hud {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  padding: 12px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 5;
+  pointer-events: none;
+  font-weight: 700;
+}
+#hud .score { font-size: 1.4rem; }
+#hud .level { font-size: 0.9rem; color: #aaa; }
+#hud .lives { font-size: 1.2rem; }
+
+/* ── Permission prompt ── */
+#permission-screen {
+  background: rgba(10,10,26,0.95);
+}
+#permission-screen p {
+  max-width: 300px;
+  text-align: center;
+  line-height: 1.5;
+  margin-bottom: 1.5em;
+  color: #bbb;
+}
+
+/* ── Mode select ── */
+.mode-select {
+  display: flex;
+  gap: 12px;
+  margin-top: 0.5em;
+}
+
+/* Level banner */
+#level-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 2.5rem;
+  font-weight: 900;
+  color: #fff;
+  opacity: 0;
+  z-index: 6;
+  pointer-events: none;
+  text-shadow: 0 0 30px rgba(77,150,255,0.6);
+}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <span class="score" id="score-display">0</span>
+  <span class="level" id="level-display">Level 1</span>
+  <span class="lives" id="lives-display">❤️❤️❤️</span>
+</div>
+
+<div id="level-banner"></div>
+
+<!-- Start Screen -->
+<div class="screen" id="start-screen">
+  <h1>TILT</h1>
+  <p class="subtitle">Balance your phone. Control the ball. Don't fall.</p>
+  <button class="btn" id="btn-play" onclick="requestMotion()">▶ PLAY</button>
+  <div class="mode-select">
+    <button class="btn btn-secondary" id="btn-mode-arcade" onclick="setMode('arcade')">Arcade</button>
+    <button class="btn btn-secondary" id="btn-mode-zen" onclick="setMode('zen')">Zen</button>
+  </div>
+</div>
+
+<!-- Permission Screen -->
+<div class="screen hidden" id="permission-screen">
+  <p>This game uses your phone's motion sensors to control the ball. Tap below to grant access.</p>
+  <button class="btn" onclick="grantPermission()">Enable Motion</button>
+</div>
+
+<!-- Game Over Screen -->
+<div class="screen hidden" id="game-over-screen">
+  <h2>💀 GAME OVER</h2>
+  <p class="final-score" id="final-score">Score: 0</p>
+  <p class="high-score" id="high-score">Best: 0</p>
+  <button class="btn" onclick="restartGame()">↻ AGAIN</button>
+  <button class="btn btn-secondary" onclick="goHome()">Menu</button>
+</div>
+
+<script>
+// ══════════════════════════════════════════
+//  TILT — A phone balance game
+//  Uses DeviceOrientation API + Canvas 2D
+// ══════════════════════════════════════════
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// ── State ──
+let W, H;
+let gameMode = 'arcade'; // arcade | zen
+let gameRunning = false;
+let animFrame = null;
+
+// Ball
+let ball = { x: 0, y: 0, vx: 0, vy: 0, r: 14 };
+// Tilt
+let tiltX = 0, tiltY = 0; // degrees from DeviceOrientation
+// Mouse/touch fallback (desktop testing)
+let useMouse = false;
+let mouseX = 0, mouseY = 0;
+
+// Game vars
+let score = 0;
+let level = 1;
+let lives = 3;
+let highScore = parseInt(localStorage.getItem('tilt_high') || '0');
+let platforms = [];
+let gems = [];
+let hazards = [];
+let particles = [];
+let scrollSpeed = 0;
+let scrollY = 0;
+let lastTime = 0;
+let levelTimer = 0;
+let comboTimer = 0;
+let combo = 0;
+let screenShake = 0;
+
+// ── Resize ──
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── Mode selection ──
+function setMode(m) {
+  gameMode = m;
+  document.getElementById('btn-mode-arcade').style.opacity = m === 'arcade' ? 1 : 0.4;
+  document.getElementById('btn-mode-zen').style.opacity = m === 'zen' ? 1 : 0.4;
+}
+setMode('arcade');
+
+// ── Screens ──
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
+  if (id) document.getElementById(id).classList.remove('hidden');
+}
+
+function goHome() {
+  gameRunning = false;
+  if (animFrame) cancelAnimationFrame(animFrame);
+  document.getElementById('hud').classList.add('hidden');
+  showScreen('start-screen');
+}
+
+// ── Motion ──
+function requestMotion() {
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    // iOS 13+
+    showScreen('permission-screen');
+  } else if ('DeviceOrientationEvent' in window) {
+    enableMotion();
+    startGame();
+  } else {
+    // No motion — fallback to mouse/touch
+    useMouse = true;
+    startGame();
+  }
+}
+
+function grantPermission() {
+  DeviceOrientationEvent.requestPermission().then(state => {
+    if (state === 'granted') {
+      enableMotion();
+      startGame();
+    } else {
+      alert('Motion permission denied. Using touch fallback.');
+      useMouse = true;
+      startGame();
+    }
+  }).catch(() => {
+    useMouse = true;
+    startGame();
+  });
+}
+
+function enableMotion() {
+  window.addEventListener('deviceorientation', e => {
+    // gamma = left/right tilt (-90 to 90)
+    // beta  = front/back tilt (-180 to 180)
+    tiltX = e.gamma || 0; // left/right
+    tiltY = e.beta || 0;  // forward/back
+    // Clamp
+    tiltX = Math.max(-45, Math.min(45, tiltX));
+    tiltY = Math.max(-45, Math.min(45, tiltY));
+  });
+}
+
+// Mouse/touch fallback
+canvas.addEventListener('mousemove', e => {
+  if (!useMouse) return;
+  mouseX = (e.clientX - W / 2) / (W / 2) * 30;
+  mouseY = (e.clientY - H / 2) / (H / 2) * 30;
+});
+canvas.addEventListener('touchmove', e => {
+  if (!useMouse) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  mouseX = (t.clientX - W / 2) / (W / 2) * 30;
+  mouseY = (t.clientY - H / 2) / (H / 2) * 30;
+}, { passive: false });
+
+// ── Platform generation ──
+function makePlatform(y, levelNum) {
+  const minW = Math.max(60, 140 - levelNum * 6);
+  const maxW = Math.max(100, 220 - levelNum * 8);
+  const w = minW + Math.random() * (maxW - minW);
+  const x = 30 + Math.random() * (W - 60 - w);
+  const type = Math.random() < 0.08 + levelNum * 0.01 ? 'moving' : 'static';
+  const p = {
+    x, y, w, h: 12,
+    type,
+    moveDir: Math.random() < 0.5 ? 1 : -1,
+    moveSpeed: 30 + Math.random() * 40,
+    color: type === 'moving' ? '#ff6b6b' : '#4d96ff'
+  };
+  // Maybe add a gem above this platform
+  if (Math.random() < 0.45) {
+    gems.push({
+      x: x + w / 2,
+      y: y - 30,
+      r: 8,
+      collected: false,
+      type: Math.random() < 0.15 ? 'big' : 'normal',
+      pulse: Math.random() * Math.PI * 2
+    });
+  }
+  // Maybe add a hazard (spike) - higher levels
+  if (levelNum > 2 && Math.random() < 0.12 + levelNum * 0.02) {
+    hazards.push({
+      x: 30 + Math.random() * (W - 60),
+      y: y - 10,
+      r: 10,
+      pulse: Math.random() * Math.PI * 2
+    });
+  }
+  return p;
+}
+
+function initPlatforms() {
+  platforms = [];
+  gems = [];
+  hazards = [];
+  // Starting platform (wide, centered)
+  platforms.push({ x: W / 2 - 80, y: H * 0.65, w: 160, h: 12, type: 'static', color: '#6bcb77' });
+  // Fill screen with platforms
+  for (let y = H * 0.5; y > -200; y -= 70 + Math.random() * 40) {
+    platforms.push(makePlatform(y, level));
+  }
+}
+
+// ── Ball ──
+function resetBall() {
+  ball.x = W / 2;
+  ball.y = H * 0.65 - ball.r - 12;
+  ball.vx = 0;
+  ball.vy = 0;
+}
+
+// ── Particles ──
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 200,
+      vy: (Math.random() - 0.5) * 200 - 50,
+      life: 0.5 + Math.random() * 0.5,
+      maxLife: 0.5 + Math.random() * 0.5,
+      r: 2 + Math.random() * 4,
+      color
+    });
+  }
+}
+
+// ── Level banner ──
+function showLevelBanner(text) {
+  const banner = document.getElementById('level-banner');
+  banner.textContent = text;
+  banner.style.opacity = 1;
+  banner.style.transform = 'translate(-50%, -50%) scale(1.2)';
+  banner.style.transition = 'opacity 0.6s, transform 0.6s';
+  setTimeout(() => {
+    banner.style.opacity = 0;
+    banner.style.transform = 'translate(-50%, -50%) scale(0.8)';
+  }, 1200);
+}
+
+// ── Start Game ──
+function startGame() {
+  showScreen(null);
+  document.getElementById('hud').classList.remove('hidden');
+  score = 0;
+  level = 1;
+  lives = gameMode === 'zen' ? 99 : 3;
+  combo = 0;
+  scrollY = 0;
+  scrollSpeed = 0;
+  particles = [];
+  levelTimer = 0;
+  initPlatforms();
+  resetBall();
+  updateHUD();
+  showLevelBanner('Level 1');
+  gameRunning = true;
+  lastTime = performance.now();
+  animFrame = requestAnimationFrame(gameLoop);
+}
+
+function restartGame() {
+  startGame();
+}
+
+// ── HUD ──
+function updateHUD() {
+  document.getElementById('score-display').textContent = score;
+  document.getElementById('level-display').textContent = 'Level ' + level;
+  const hearts = gameMode === 'zen' ? '🧘 Zen' : '❤️'.repeat(Math.max(0, lives));
+  document.getElementById('lives-display').textContent = hearts;
+}
+
+// ── Game Over ──
+function gameOver() {
+  gameRunning = false;
+  if (animFrame) cancelAnimationFrame(animFrame);
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('tilt_high', highScore);
+  }
+  document.getElementById('final-score').textContent = 'Score: ' + score;
+  document.getElementById('high-score').textContent = 'Best: ' + highScore;
+  document.getElementById('hud').classList.add('hidden');
+  showScreen('game-over-screen');
+}
+
+// ── Physics & Update ──
+function update(dt) {
+  if (!gameRunning) return;
+
+  const tx = useMouse ? mouseX : tiltX;
+  const ty = useMouse ? mouseY : tiltY;
+
+  // Gravity + tilt force
+  const gravity = 600;
+  const tiltForce = 500;
+  const friction = 0.97;
+  const bounce = 0.35;
+
+  ball.vx += (tx / 45) * tiltForce * dt;
+  ball.vy += gravity * dt;
+  ball.vx *= friction;
+
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+
+  // Scrolling — push camera up as ball goes higher
+  const scrollThreshold = H * 0.35;
+  if (ball.y < scrollThreshold) {
+    const diff = scrollThreshold - ball.y;
+    scrollSpeed = diff * 3;
+  } else {
+    scrollSpeed = Math.max(0, scrollSpeed - 200 * dt);
+  }
+
+  // Minimum upward scroll in arcade mode
+  if (gameMode === 'arcade') {
+    const minScroll = 15 + level * 5;
+    scrollSpeed = Math.max(scrollSpeed, minScroll);
+  }
+
+  const scroll = scrollSpeed * dt;
+  scrollY += scroll;
+  ball.y += scroll;
+
+  // Move everything down
+  platforms.forEach(p => p.y += scroll);
+  gems.forEach(g => g.y += scroll);
+  hazards.forEach(h => h.y += scroll);
+
+  // Update moving platforms
+  platforms.forEach(p => {
+    if (p.type === 'moving') {
+      p.x += p.moveDir * p.moveSpeed * dt;
+      if (p.x < 10 || p.x + p.w > W - 10) p.moveDir *= -1;
+    }
+  });
+
+  // Platform collision
+  let onPlatform = false;
+  platforms.forEach(p => {
+    if (ball.vy > 0 &&
+        ball.x + ball.r > p.x &&
+        ball.x - ball.r < p.x + p.w &&
+        ball.y + ball.r > p.y &&
+        ball.y + ball.r < p.y + p.h + ball.vy * dt + 5) {
+      ball.y = p.y - ball.r;
+      ball.vy = -ball.vy * bounce;
+      if (Math.abs(ball.vy) < 30) ball.vy = 0;
+      onPlatform = true;
+      // Move with platform
+      if (p.type === 'moving') {
+        ball.x += p.moveDir * p.moveSpeed * dt;
+      }
+    }
+  });
+
+  // Wall bounce
+  if (ball.x - ball.r < 0) {
+    ball.x = ball.r;
+    ball.vx = Math.abs(ball.vx) * 0.6;
+  }
+  if (ball.x + ball.r > W) {
+    ball.x = W - ball.r;
+    ball.vx = -Math.abs(ball.vx) * 0.6;
+  }
+
+  // Gem collection
+  gems.forEach(g => {
+    if (g.collected) return;
+    const dx = ball.x - g.x;
+    const dy = ball.y - g.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < ball.r + g.r + 4) {
+      g.collected = true;
+      const pts = g.type === 'big' ? 50 : 10;
+      combo++;
+      comboTimer = 1.5;
+      const multiplier = Math.min(combo, 5);
+      score += pts * multiplier;
+      spawnParticles(g.x, g.y, g.type === 'big' ? '#ffd93d' : '#6bcb77', g.type === 'big' ? 20 : 10);
+      updateHUD();
+    }
+    g.pulse += dt * 3;
+  });
+
+  // Hazard collision
+  hazards.forEach(h => {
+    const dx = ball.x - h.x;
+    const dy = ball.y - h.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < ball.r + h.r) {
+      loseLife();
+      h.y = H + 100; // remove
+    }
+    h.pulse += dt * 4;
+  });
+
+  // Combo timer
+  if (comboTimer > 0) {
+    comboTimer -= dt;
+    if (comboTimer <= 0) combo = 0;
+  }
+
+  // Fell off bottom
+  if (ball.y - ball.r > H + 50) {
+    loseLife();
+  }
+
+  // Score from height
+  score += Math.floor(scroll * 0.2);
+  updateHUD();
+
+  // Level progression
+  levelTimer += dt;
+  if (levelTimer > 20 + level * 5) {
+    levelTimer = 0;
+    level++;
+    showLevelBanner('Level ' + level);
+    updateHUD();
+  }
+
+  // Generate new platforms above
+  let topPlatY = Infinity;
+  platforms.forEach(p => { if (p.y < topPlatY) topPlatY = p.y; });
+  while (topPlatY > -50) {
+    topPlatY -= 70 + Math.random() * 40;
+    platforms.push(makePlatform(topPlatY, level));
+  }
+
+  // Prune off-screen objects
+  platforms = platforms.filter(p => p.y < H + 100);
+  gems = gems.filter(g => g.y < H + 100 && !g.collected);
+  hazards = hazards.filter(h => h.y < H + 100);
+
+  // Particles
+  particles.forEach(p => {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 200 * dt;
+    p.life -= dt;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Screen shake decay
+  if (screenShake > 0) screenShake *= 0.9;
+  if (screenShake < 0.3) screenShake = 0;
+}
+
+function loseLife() {
+  lives--;
+  combo = 0;
+  screenShake = 12;
+  spawnParticles(ball.x, ball.y, '#ff6b6b', 25);
+
+  if (lives <= 0 && gameMode === 'arcade') {
+    gameOver();
+    return;
+  }
+
+  // Respawn on nearest visible platform
+  let best = null, bestDist = Infinity;
+  platforms.forEach(p => {
+    const cy = p.y;
+    if (cy > 0 && cy < H && cy < bestDist) {
+      bestDist = cy;
+      best = p;
+    }
+  });
+  if (best) {
+    ball.x = best.x + best.w / 2;
+    ball.y = best.y - ball.r - 2;
+  } else {
+    ball.x = W / 2;
+    ball.y = H * 0.4;
+  }
+  ball.vx = 0;
+  ball.vy = 0;
+  updateHUD();
+}
+
+// ── Render ──
+function draw() {
+  ctx.save();
+
+  // Screen shake
+  if (screenShake > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * screenShake * 2,
+      (Math.random() - 0.5) * screenShake * 2
+    );
+  }
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0a0a1a');
+  grad.addColorStop(1, '#1a1a3e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(-20, -20, W + 40, H + 40);
+
+  // Stars (subtle bg)
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  for (let i = 0; i < 40; i++) {
+    const sx = ((i * 137.5 + scrollY * 0.05) % W);
+    const sy = ((i * 97.3 + scrollY * 0.1) % H);
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Platforms
+  platforms.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    roundRect(ctx, p.x, p.y, p.w, p.h, 6);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  // Gems
+  gems.forEach(g => {
+    if (g.collected) return;
+    const pulse = Math.sin(g.pulse) * 3;
+    const r = g.r + pulse;
+    const col = g.type === 'big' ? '#ffd93d' : '#6bcb77';
+    ctx.fillStyle = col;
+    ctx.shadowColor = col;
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    // Diamond shape
+    ctx.moveTo(g.x, g.y - r);
+    ctx.lineTo(g.x + r * 0.7, g.y);
+    ctx.lineTo(g.x, g.y + r);
+    ctx.lineTo(g.x - r * 0.7, g.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  // Hazards (spikes)
+  hazards.forEach(h => {
+    const pulse = Math.sin(h.pulse) * 2;
+    ctx.fillStyle = '#ff4757';
+    ctx.shadowColor = '#ff4757';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    const r = h.r + pulse;
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+      const outerX = h.x + Math.cos(angle) * r;
+      const outerY = h.y + Math.sin(angle) * r;
+      const innerAngle = angle + Math.PI / 5;
+      const innerX = h.x + Math.cos(innerAngle) * r * 0.4;
+      const innerY = h.y + Math.sin(innerAngle) * r * 0.4;
+      if (i === 0) ctx.moveTo(outerX, outerY);
+      else ctx.lineTo(outerX, outerY);
+      ctx.lineTo(innerX, innerY);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  // Particles
+  particles.forEach(p => {
+    const alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Ball
+  const ballGrad = ctx.createRadialGradient(
+    ball.x - 3, ball.y - 3, 2,
+    ball.x, ball.y, ball.r
+  );
+  ballGrad.addColorStop(0, '#fff');
+  ballGrad.addColorStop(0.5, '#e0e0ff');
+  ballGrad.addColorStop(1, '#8888cc');
+  ctx.fillStyle = ballGrad;
+  ctx.shadowColor = '#aaaaff';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Combo indicator
+  if (combo > 1 && comboTimer > 0) {
+    ctx.fillStyle = `rgba(255, 217, 61, ${comboTimer / 1.5})`;
+    ctx.font = 'bold 1.2rem sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${combo}x COMBO`, ball.x, ball.y - ball.r - 15);
+  }
+
+  // Tilt indicator (subtle arrows at edges)
+  const tx = useMouse ? mouseX : tiltX;
+  const arrowAlpha = Math.min(Math.abs(tx) / 30, 0.6);
+  if (Math.abs(tx) > 3) {
+    ctx.fillStyle = `rgba(255,255,255,${arrowAlpha})`;
+    ctx.font = '2rem sans-serif';
+    ctx.textAlign = 'center';
+    if (tx > 0) ctx.fillText('›', W - 20, H / 2);
+    else ctx.fillText('‹', 20, H / 2);
+  }
+
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+
+// ── Game Loop ──
+function gameLoop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05); // cap at 50ms
+  lastTime = ts;
+
+  update(dt);
+  draw();
+
+  if (gameRunning) {
+    animFrame = requestAnimationFrame(gameLoop);
+  }
+}
+
+// ── Prevent zoom/scroll on mobile ──
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('touchmove', e => {
+  if (gameRunning) e.preventDefault();
+}, { passive: false });
+
+// ── Detect desktop vs mobile ──
+const isDesktop = !('ontouchstart' in window) && !navigator.maxTouchPoints;
+if (isDesktop) {
+  useMouse = true;
+  document.querySelector('.subtitle').textContent = 'Move your mouse to tilt. Don\'t fall.';
+}
+</script>
+</body>
+</html>
